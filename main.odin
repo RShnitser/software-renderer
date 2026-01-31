@@ -2,11 +2,36 @@ package main
 
 import win32 "core:sys/windows"
 import d3d11 "vendor:directx/d3d11"
+import d3d "vendor:directx/d3d_compiler"
 import dxgi "vendor:directx/dxgi"
 import "core:fmt"
+import "core:mem"
 
 global_running: bool
 global_performance_frequency: f64
+
+TEXTURE_WIDTH :: 1920
+TEXTURE_HEIGHT :: 1080
+
+Color :: struct #packed{
+	R, G, B, A: u8
+}
+
+Pixel :: struct #raw_union{
+	value: u32,
+	color: Color,
+}
+
+update_pixels :: proc(pixels: []Pixel){
+	index : u32
+	for h in 0..< TEXTURE_HEIGHT{
+		for w in 0..< TEXTURE_WIDTH{
+			pixels[index].color.G = u8(w)
+			pixels[index].color.B = u8(h)
+			index += 1
+		}
+	}
+}
 
 win32_get_wall_clock :: proc() ->u64{
 	result: win32.LARGE_INTEGER
@@ -61,6 +86,10 @@ main :: proc(){
 	
 	dc := win32.GetDC(window)
 
+
+
+	pixels := make([]Pixel, TEXTURE_WIDTH * TEXTURE_HEIGHT)
+	update_pixels(pixels)
 
 	feature_levels := [?]d3d11.FEATURE_LEVEL{d3d11.FEATURE_LEVEL._11_1, d3d11.FEATURE_LEVEL._11_0}
 
@@ -132,6 +161,97 @@ main :: proc(){
 	hr = device->CreateRasterizerState(&rasterizer_desc, &rasterizer_state)
 	assert(win32.SUCCEEDED(hr))
 
+	err_blob: ^d3d11.IBlob
+	vs_blob: ^d3d11.IBlob
+	hr = d3d.Compile(
+		raw_data(shader),
+		len(shader),
+		"shaders.hlsl",
+		nil,
+		nil,
+		"vs_main",
+		"vs_5_0",
+		0,
+		0,
+		&vs_blob,
+		&err_blob,
+	)
+	if err_blob != nil{
+		fmt.println(cstring(err_blob->GetBufferPointer()))
+		err_blob->Release()
+	}
+	assert(win32.SUCCEEDED(hr))
+
+	ps_blob: ^d3d11.IBlob
+	hr = d3d.Compile(
+		raw_data(shader),
+		len(shader),
+		"shaders.hlsl",
+		nil,
+		nil,
+		"ps_main",
+		"ps_5_0",
+		0,
+		0,
+		&ps_blob,
+		nil,
+	)
+	assert(win32.SUCCEEDED(hr))
+
+	vertex_shader: ^d3d11.IVertexShader
+	hr =
+	device->CreateVertexShader(
+		vs_blob->GetBufferPointer(),
+		vs_blob->GetBufferSize(),
+		nil,
+		&vertex_shader,
+	)
+	assert(win32.SUCCEEDED(hr))
+
+	pixel_shader: ^d3d11.IPixelShader
+	hr =
+	device->CreatePixelShader(
+		ps_blob->GetBufferPointer(),
+		ps_blob->GetBufferSize(),
+		nil,
+		&pixel_shader,
+	)
+	assert(win32.SUCCEEDED(hr))
+
+
+	texture_desc := d3d11.TEXTURE2D_DESC{
+		Width      = TEXTURE_WIDTH,
+		Height     = TEXTURE_HEIGHT,
+		MipLevels  = 1,
+		ArraySize  = 1,
+		Format     = .R8G8B8A8_UNORM_SRGB,
+		SampleDesc = {Count = 1},
+		Usage      = .DYNAMIC,
+		BindFlags  = {.SHADER_RESOURCE},
+		CPUAccessFlags = {.WRITE}
+	}
+
+	// texture_data := d3d11.SUBRESOURCE_DATA{
+	// 	pSysMem     = raw_data(pixels),
+	// 	SysMemPitch = TEXTURE_WIDTH * 4,
+	// }
+
+	texture: ^d3d11.ITexture2D
+	device->CreateTexture2D(&texture_desc, nil, &texture)
+
+	texture_view: ^d3d11.IShaderResourceView
+	device->CreateShaderResourceView(texture, nil, &texture_view)
+
+	sampler_desc := d3d11.SAMPLER_DESC{
+			Filter         = .MIN_MAG_MIP_POINT,
+			AddressU       = .CLAMP,
+			AddressV       = .CLAMP,
+			AddressW       = .CLAMP,
+			ComparisonFunc = .NEVER,
+		}
+	sampler_state: ^d3d11.ISamplerState
+	device->CreateSamplerState(&sampler_desc, &sampler_state)
+
 	win32.ShowWindow(window, win32.SW_SHOWDEFAULT)
 
 
@@ -160,12 +280,58 @@ main :: proc(){
 			fmt.println("tick")
 		}
 
+		mapped_data: d3d11.MAPPED_SUBRESOURCE
+		hr = device_context->Map(texture, 0, .WRITE_DISCARD, {}, &mapped_data)
+		assert(win32.SUCCEEDED(hr))
+		
+		mem.copy(mapped_data.pData, raw_data(pixels), TEXTURE_WIDTH * TEXTURE_HEIGHT * 4)
+		device_context->Unmap(texture, 0)
+
+		viewport := d3d11.VIEWPORT{0, 0, f32(width), f32(height), 0, 1}
 		device_context->ClearRenderTargetView(framebuffer_view, &[4]f32{1.0, 0.0, 1.0, 1.0})
+
+		device_context->IASetPrimitiveTopology(.TRIANGLELIST)
+		device_context->IASetInputLayout(nil)
+
+		device_context->VSSetShader(vertex_shader, nil, 0)
+
+		device_context->RSSetViewports(1, &viewport)
+		device_context->RSSetState(rasterizer_state)
+
+		device_context->PSSetShader(pixel_shader, nil, 0)
+		device_context->PSSetShaderResources(0, 1, &texture_view)
+		device_context->PSSetSamplers(0, 1, &sampler_state)
+
+		device_context->OMSetRenderTargets(1, &framebuffer_view, nil)
+		device_context->OMSetBlendState(nil, nil, u32(d3d11.COLOR_WRITE_ENABLE_ALL))
+
+		device_context->Draw(3, 0)
+
 		swapchain->Present(1, {})
 
 		next_counter := win32_get_wall_clock()
 		dt = win32_get_seconds_elapsed(prev_counter, next_counter)
+		// fmt.println(dt)
 		prev_counter = next_counter
 
 	}
 }
+
+shader := `
+struct vs_out {
+	float4 position : SV_POSITION;
+	float2 texcoord : TEX;
+};
+Texture2D    tex : register(t0);
+SamplerState samp : register(s0);
+vs_out vs_main(uint vI : SV_VertexId) {
+	vs_out output;
+	float2 texcoord = float2((vI << 1) & 2, vI & 2);
+    output.texcoord = texcoord;
+    output.position = float4(texcoord.x * 2 - 1, -texcoord.y * 2 + 1, 0, 1);
+	return output;
+}
+float4 ps_main(vs_out input) : SV_TARGET {
+	return tex.Sample(samp, input.texcoord);
+}
+`

@@ -6,12 +6,34 @@ import d3d "vendor:directx/d3d_compiler"
 import dxgi "vendor:directx/dxgi"
 import "core:fmt"
 import "core:mem"
+import "base:runtime"
 
+CREATE_DANGEROUS_WINDOW :: win32.WM_USER + 0x1337
+DESTROY_DANGEROUS_WINDOW :: win32.WM_USER + 0x1338
+
+global_main_thread_id: win32.DWORD
 global_running: bool
 global_performance_frequency: f64
 
+// framebuffer: ^d3d11.ITexture2D
+// framebuffer_view: ^d3d11.IRenderTargetView
+// device_context: ^d3d11.IDeviceContext
+// swapchain: ^dxgi.ISwapChain1
+
 TEXTURE_WIDTH :: 1920
 TEXTURE_HEIGHT :: 1080
+
+WindowParams :: struct {
+    dwExStyle: win32.DWORD,
+    lpClassName: win32.LPCWSTR,
+    lpWindowName: win32.LPCWSTR,
+    dwStyle: win32.DWORD,
+    X, Y, nWidth, nHeight: i32,
+    hWndParent: win32.HWND,
+    hMenu: win32.HMENU,
+    hInstance: win32.HINSTANCE,
+    lpParam: win32.LPVOID,
+};
 
 Color :: struct #packed{
 	R, G, B, A: u8
@@ -39,23 +61,44 @@ win32_get_wall_clock :: proc() ->u64{
 	return u64(result)
 }
 
-win32_get_seconds_elapsed :: proc(start, end: u64) -> f64
-{
+win32_get_seconds_elapsed :: proc(start, end: u64) -> f64{
 	result := f64(end - start) / global_performance_frequency
 	return result;
 }
 
 window_proc :: proc "stdcall" (hwnd: win32.HWND, msg: win32.UINT, wparam: win32.WPARAM, lparam: win32.LPARAM) -> win32.LRESULT {
+	// context = runtime.default_context()
     switch(msg) {
 	case win32.WM_DESTROY:
 		win32.PostQuitMessage(0)
+	// case win32.WM_SIZE:
+	// 	width := win32.LOWORD(lparam)
+	// 	height := win32.HIWORD(lparam)
+	// 	if width > 0 && height > 0 && device_context != nil && framebuffer != nil && swapchain != nil && framebuffer_view != nil{
+
+	// 		viewport := d3d11.VIEWPORT{0, 0, f32(width), f32(height), 0, 1}
+	// 		device_context->RSSetViewports(1, &viewport)
+
+	// 		// device_context->Flush()
+
+	// 		// framebuffer_view->Release()
+	// 		// framebuffer->Release()
+
+	// 		// swapchain->ResizeBuffers(0, u32(width), u32(height), .UNKNOWN, nil)
+	// 	}
+		
 	}
 
     return win32.DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
-main :: proc(){
 
+main :: proc(){
+// main_thread :: proc "stdcall" (param : win32.LPVOID) -> win32.DWORD{
+
+	// service_window := (win32.HWND)(param)
+
+	context = runtime.default_context()
 	performance_frequency_result: win32.LARGE_INTEGER
 	win32.QueryPerformanceFrequency(&performance_frequency_result)
 	global_performance_frequency = f64(performance_frequency_result)
@@ -82,6 +125,16 @@ main :: proc(){
 		1280, 720,
 		nil, nil, instance, nil,
 	)
+	// win_params := WindowParams{
+	// 	0,
+	// 	CLASS_NAME,
+	// 	win32.L("Software Renderer"),
+	// 	win32.WS_OVERLAPPEDWINDOW,
+	// 	win32.CW_USEDEFAULT, win32.CW_USEDEFAULT,
+	// 	1280, 720,
+	// 	nil, nil, instance, nil,
+	// }
+	// window := cast(win32.HWND)cast(uintptr)(win32.SendMessageW(service_window, CREATE_DANGEROUS_WINDOW, uintptr(&win_params), 0))
 	assert(window != nil, "Failed to create window")
 	
 	dc := win32.GetDC(window)
@@ -264,6 +317,9 @@ main :: proc(){
 
 	TIME_STEP :: 2.0
 
+	viewport := d3d11.VIEWPORT{0, 0, f32(width), f32(height), 0, 1}
+	device_context->RSSetViewports(1, &viewport)
+
 	for global_running{
 		message: win32.MSG
 		for win32.PeekMessageW(&message, nil, 0, 0, win32.PM_REMOVE) {
@@ -280,14 +336,19 @@ main :: proc(){
 			fmt.println("tick")
 		}
 
+		// win32.GetClientRect(window, &rect)
+		// width: u32 = u32(rect.right - rect.left)
+		// height: u32 = u32(rect.bottom - rect.top)
+		// fmt.println(width, height)
+
 		mapped_data: d3d11.MAPPED_SUBRESOURCE
 		hr = device_context->Map(texture, 0, .WRITE_DISCARD, {}, &mapped_data)
 		assert(win32.SUCCEEDED(hr))
-		
+		// update_pixels(pixels)
 		mem.copy(mapped_data.pData, raw_data(pixels), TEXTURE_WIDTH * TEXTURE_HEIGHT * 4)
 		device_context->Unmap(texture, 0)
 
-		viewport := d3d11.VIEWPORT{0, 0, f32(width), f32(height), 0, 1}
+		// viewport := d3d11.VIEWPORT{0, 0, f32(width), f32(height), 0, 1}
 		device_context->ClearRenderTargetView(framebuffer_view, &[4]f32{1.0, 0.0, 1.0, 1.0})
 
 		device_context->IASetPrimitiveTopology(.TRIANGLELIST)
@@ -295,7 +356,7 @@ main :: proc(){
 
 		device_context->VSSetShader(vertex_shader, nil, 0)
 
-		device_context->RSSetViewports(1, &viewport)
+		// device_context->RSSetViewports(1, &viewport)
 		device_context->RSSetState(rasterizer_state)
 
 		device_context->PSSetShader(pixel_shader, nil, 0)
@@ -315,6 +376,8 @@ main :: proc(){
 		prev_counter = next_counter
 
 	}
+
+	// win32.ExitProcess(0)
 }
 
 shader := `
@@ -335,3 +398,75 @@ float4 ps_main(vs_out input) : SV_TARGET {
 	return tex.Sample(samp, input.texcoord);
 }
 `
+
+service_window_proc :: proc "stdcall" (hwnd: win32.HWND, msg: win32.UINT, wparam: win32.WPARAM, lparam: win32.LPARAM) -> win32.LRESULT {
+
+	result: win32.LRESULT = 0
+    switch(msg) {
+	case CREATE_DANGEROUS_WINDOW:
+		window_params := (^WindowParams)(wparam)
+		result = cast(win32.LRESULT)cast(uintptr)win32.CreateWindowExW(
+			window_params.dwExStyle,
+			window_params.lpClassName,
+			window_params.lpWindowName,
+			window_params.dwStyle,
+			window_params.X,
+			window_params.Y,
+			window_params.nWidth,
+			window_params.nHeight,
+			window_params.hWndParent,
+			window_params.hMenu,
+			window_params.hInstance,
+			window_params.lpParam,
+		)
+
+	case:
+		result = win32.DefWindowProcW(hwnd, msg, wparam, lparam)
+	}
+	return result
+}
+
+
+// main :: proc(){
+// 	instance := win32.HINSTANCE(win32.GetModuleHandleW(nil))
+
+// 	CLASS_NAME :: "service window"
+
+// 	window_class := win32.WNDCLASSW {
+// 		style = win32.CS_OWNDC,
+// 		lpfnWndProc = service_window_proc,
+// 		lpszClassName = CLASS_NAME,
+// 		hInstance = instance,
+// 		hCursor = win32.LoadCursorA(nil, win32.IDC_ARROW),
+// 	}
+
+// 	class_atom := win32.RegisterClassW(&window_class)
+//     assert(class_atom != 0, "Failed to register window class")
+
+//     window := win32.CreateWindowW(
+// 		CLASS_NAME,
+// 		win32.L("Service Window"),
+// 		win32.WS_OVERLAPPEDWINDOW, //win32.WS_VISIBLE,
+// 		win32.CW_USEDEFAULT, win32.CW_USEDEFAULT,
+// 		win32.CW_USEDEFAULT, win32.CW_USEDEFAULT,
+// 		nil, nil, instance, nil,
+// 	)
+// 	assert(window != nil, "Failed to create window")
+
+// 	win32.CreateThread(nil, 0, main_thread, window, 0, &global_main_thread_id)
+
+// 	for {
+//         message: win32.MSG
+//         win32.GetMessageW(&message, nil, 0, 0)
+//         win32.TranslateMessage(&message)
+//         if (message.message == win32.WM_CHAR) ||
+//            (message.message == win32.WM_KEYDOWN) ||
+//            (message.message == win32.WM_QUIT) ||
+//            (message.message == win32.WM_SIZE){
+//             win32.PostThreadMessageW(global_main_thread_id, message.message, message.wParam, message.lParam)
+//         }
+//         else{
+//             win32.DispatchMessageW(&message)
+//         }
+//     }
+// }

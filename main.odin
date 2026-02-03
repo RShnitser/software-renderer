@@ -16,7 +16,7 @@ global_running: bool
 global_performance_frequency: f64
 
 adapter: ^dxgi.IAdapter
-framebuffer: ^d3d11.ITexture2D
+// framebuffer: ^d3d11.ITexture2D
 framebuffer_view: ^d3d11.IRenderTargetView
 device_context: ^d3d11.IDeviceContext
 device: ^d3d11.IDevice
@@ -46,6 +46,31 @@ Pixel :: struct #raw_union{
 	color: Color,
 }
 
+// debug_messages :: proc(info_queue: ^d3d11.IInfoQueue) {
+// 	message_count := info_queue->GetNumStoredMessages()
+
+// 	for i: u64 = 0; i < message_count; i += 1 {
+// 		message_length: uint = 0
+// 		info_queue->GetMessage(i, nil, &message_length)
+
+// 		message: ^d3d11.MESSAGE = new(d3d11.MESSAGE, context.temp_allocator)
+// 		info_queue->GetMessage(i, message, &message_length)
+
+// 		if message.ID == .LIVE_DEVICE {
+// 			continue
+// 		}
+
+// 		fmt.printfln("==================")
+// 		fmt.printfln("Message ID: ", message.ID)
+// 		fmt.printfln("Category: ", message.Category)
+// 		fmt.printfln("Severity: ", message.Severity)
+// 		fmt.printfln("Description: ", message.pDescription)
+// 		fmt.printfln("==================")
+// 	}
+// 	free_all(context.temp_allocator)
+// }
+
+
 update_pixels :: proc(pixels: []Pixel){
 	index : u32
 	for h in 0..< TEXTURE_HEIGHT{
@@ -69,45 +94,62 @@ win32_get_seconds_elapsed :: proc(start, end: u64) -> f64{
 }
 
 window_proc :: proc "stdcall" (hwnd: win32.HWND, msg: win32.UINT, wparam: win32.WPARAM, lparam: win32.LPARAM) -> win32.LRESULT {
-	// context = runtime.default_context()
+	context = runtime.default_context()
     switch(msg) {
 	case win32.WM_DESTROY:
 		win32.PostQuitMessage(0)
-	// case win32.WM_SIZE:
-	// 	width := win32.LOWORD(lparam)
-	// 	height := win32.HIWORD(lparam)
-	// 	if width > 0 && height > 0 && device_context != nil && framebuffer != nil && swapchain != nil && framebuffer_view != nil{
+	case win32.WM_SIZE:
+		width := win32.LOWORD(lparam)
+		height := win32.HIWORD(lparam)
+		// if false{
+		if swapchain != nil && device_context != nil && (width != 0 || height !=0 || wparam != win32.SIZE_MINIMIZED) {
+		// if width > 0 && height > 0 && device_context != nil && framebuffer != nil && swapchain != nil && framebuffer_view != nil{
 
-	// 		// viewport := d3d11.VIEWPORT{0, 0, f32(width), f32(height), 0, 1}
-	// 		// device_context->RSSetViewports(1, &viewport)
+			
+			// device_context->Flush()
+			if framebuffer_view != nil{
+				hr := framebuffer_view->Release()
+				assert(win32.SUCCEEDED(hr))
+				framebuffer_view = nil
+			}
 
-	// 		// device_context->Flush()
+			//device_context->OMSetRenderTargets(0, nil, nil)
+			// framebuffer->Release()
+			// swapchain->Release()
+			
+			hr := swapchain->ResizeBuffers(0, u32(width), u32(height), .UNKNOWN, nil)
+			assert(win32.SUCCEEDED(hr))
 
-	// 		framebuffer_view->Release()
-	// 		framebuffer->Release()
-	// 		swapchain->Release()
+			framebuffer: ^d3d11.ITexture2D
+			hr = swapchain->GetBuffer(0, d3d11.ITexture2D_UUID, (^rawptr)(&framebuffer))
+			assert(win32.SUCCEEDED(hr))
+			
+			device->CreateRenderTargetView(framebuffer, nil, &framebuffer_view)
+			framebuffer->Release()
+			
 
-	// 		swapchain_desc := dxgi.SWAP_CHAIN_DESC1 {
-	// 			Width = u32(width),
-	// 			Height = u32(height),
-	// 			Format = .B8G8R8A8_UNORM_SRGB,
-	// 			Stereo = false,
-	// 			SampleDesc = {Count = 1, Quality = 0},
-	// 			BufferUsage = {.RENDER_TARGET_OUTPUT},
-	// 			BufferCount = 2,
-	// 			Scaling = .STRETCH,
-	// 			SwapEffect = .DISCARD,
-	// 			AlphaMode = .UNSPECIFIED,
-	// 			Flags = {.ALLOW_MODE_SWITCH},
-	// 		}
-	// 		factory: ^dxgi.IFactory2
-	// 		adapter->GetParent(dxgi.IFactory2_UUID, (^rawptr)(&factory))
-	// 		factory->CreateSwapChainForHwnd(device, hwnd, &swapchain_desc, nil, nil, &swapchain)
-	// 		swapchain->GetBuffer(0, d3d11.ITexture2D_UUID, (^rawptr)(&framebuffer))
-	// 		device->CreateRenderTargetView(framebuffer, nil, &framebuffer_view)
-	// 		// swapchain->ResizeBuffers(0, u32(width), u32(height), .UNKNOWN, nil)
-	// 	}
-		
+			viewport := d3d11.VIEWPORT{0, 0, f32(width), f32(height), 0, 1}
+			device_context->RSSetViewports(1, &viewport)
+
+
+			// swapchain_desc := dxgi.SWAP_CHAIN_DESC1 {
+			// 	Width = u32(width),
+			// 	Height = u32(height),
+			// 	Format = .B8G8R8A8_UNORM_SRGB,
+			// 	Stereo = false,
+			// 	SampleDesc = {Count = 1, Quality = 0},
+			// 	BufferUsage = {.RENDER_TARGET_OUTPUT},
+			// 	BufferCount = 2,
+			// 	Scaling = .STRETCH,
+			// 	SwapEffect = .DISCARD,
+			// 	AlphaMode = .UNSPECIFIED,
+			// 	Flags = {.ALLOW_MODE_SWITCH},
+			// }
+			// factory: ^dxgi.IFactory2
+			// adapter->GetParent(dxgi.IFactory2_UUID, (^rawptr)(&factory))
+			// factory->CreateSwapChainForHwnd(device, hwnd, &swapchain_desc, nil, nil, &swapchain)
+		}
+		return 0
 	}
 
     return win32.DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -183,6 +225,33 @@ main :: proc(){
 	)
 	assert(win32.SUCCEEDED(hr))
 
+	debug: ^d3d11.IDebug
+	device->QueryInterface(d3d11.IDebug_UUID, (^rawptr)(&debug))
+
+	debugInfoQueue: ^d3d11.IInfoQueue
+
+	debug->QueryInterface(d3d11.IInfoQueue_UUID, (^rawptr)(&debugInfoQueue))
+	debugInfoQueue->SetBreakOnSeverity(.CORRUPTION, true)
+	debugInfoQueue->SetBreakOnSeverity(.ERROR, true)
+
+	swapchain_desc := dxgi.SWAP_CHAIN_DESC1 {
+		Width = 0,
+		Height = 0,
+		Format = .B8G8R8A8_UNORM,
+		Stereo = false,
+		SampleDesc = {Count = 1, Quality = 0},
+		BufferUsage = {.RENDER_TARGET_OUTPUT},
+		BufferCount = 2,
+		Scaling = .STRETCH,
+		SwapEffect = .FLIP_DISCARD,
+		AlphaMode = .UNSPECIFIED,
+		Flags = {.ALLOW_MODE_SWITCH},
+	}
+
+	// d3d11.CreateDeviceAndSwapchain(
+
+	// )
+
 	dxgi_device: ^dxgi.IDevice
 	hr = device->QueryInterface(dxgi.IDevice_UUID, (^rawptr)(&dxgi_device))
 	assert(win32.SUCCEEDED(hr))
@@ -195,31 +264,20 @@ main :: proc(){
 	hr = adapter->GetParent(dxgi.IFactory2_UUID, (^rawptr)(&factory))
 	assert(win32.SUCCEEDED(hr))
 
-	swapchain_desc := dxgi.SWAP_CHAIN_DESC1 {
-		Width = 0,
-		Height = 0,
-		Format = .B8G8R8A8_UNORM_SRGB,
-		Stereo = false,
-		SampleDesc = {Count = 1, Quality = 0},
-		BufferUsage = {.RENDER_TARGET_OUTPUT},
-		BufferCount = 2,
-		Scaling = .STRETCH,
-		SwapEffect = .DISCARD,
-		AlphaMode = .UNSPECIFIED,
-		Flags = {.ALLOW_MODE_SWITCH},
-	}
+
 
 	// swapchain: ^dxgi.ISwapChain1
 	hr = factory->CreateSwapChainForHwnd(device, window, &swapchain_desc, nil, nil, &swapchain)
 	assert(win32.SUCCEEDED(hr))
 
-	// framebuffer: ^d3d11.ITexture2D
+	framebuffer: ^d3d11.ITexture2D
 	hr = swapchain->GetBuffer(0, d3d11.ITexture2D_UUID, (^rawptr)(&framebuffer))
 	assert(win32.SUCCEEDED(hr))
 
 	// framebuffer_view: ^d3d11.IRenderTargetView
 	hr = device->CreateRenderTargetView(framebuffer, nil, &framebuffer_view)
 	assert(win32.SUCCEEDED(hr))
+	framebuffer->Release()
 
 	rect: win32.RECT
 	win32.GetClientRect(window, &rect)

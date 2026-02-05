@@ -156,10 +156,10 @@ window_proc :: proc "stdcall" (hwnd: win32.HWND, msg: win32.UINT, wparam: win32.
 }
 
 
-main :: proc(){
-// main_thread :: proc "stdcall" (param : win32.LPVOID) -> win32.DWORD{
+// main :: proc(){
+main_thread :: proc "stdcall" (param : win32.LPVOID) -> win32.DWORD{
 
-	// service_window := (win32.HWND)(param)
+	service_window := (win32.HWND)(param)
 
 	context = runtime.default_context()
 	performance_frequency_result: win32.LARGE_INTEGER
@@ -180,24 +180,24 @@ main :: proc(){
 	class_atom := win32.RegisterClassW(&window_class)
     assert(class_atom != 0, "Failed to register window class")
 
-    window := win32.CreateWindowW(
-		CLASS_NAME,
-		win32.L("Software Renderer"),
-		win32.WS_OVERLAPPEDWINDOW, //win32.WS_VISIBLE,
-		win32.CW_USEDEFAULT, win32.CW_USEDEFAULT,
-		1280, 720,
-		nil, nil, instance, nil,
-	)
-	// win_params := WindowParams{
-	// 	0,
+    // window := win32.CreateWindowW(
 	// 	CLASS_NAME,
 	// 	win32.L("Software Renderer"),
-	// 	win32.WS_OVERLAPPEDWINDOW,
+	// 	win32.WS_OVERLAPPEDWINDOW, //win32.WS_VISIBLE,
 	// 	win32.CW_USEDEFAULT, win32.CW_USEDEFAULT,
 	// 	1280, 720,
 	// 	nil, nil, instance, nil,
-	// }
-	// window := cast(win32.HWND)cast(uintptr)(win32.SendMessageW(service_window, CREATE_DANGEROUS_WINDOW, uintptr(&win_params), 0))
+	// )
+	win_params := WindowParams{
+		0,
+		CLASS_NAME,
+		win32.L("Software Renderer"),
+		win32.WS_OVERLAPPEDWINDOW,
+		win32.CW_USEDEFAULT, win32.CW_USEDEFAULT,
+		1280, 720,
+		nil, nil, instance, nil,
+	}
+	window := cast(win32.HWND)cast(uintptr)(win32.SendMessageW(service_window, CREATE_DANGEROUS_WINDOW, uintptr(&win_params), 0))
 	assert(window != nil, "Failed to create window")
 	
 	dc := win32.GetDC(window)
@@ -394,7 +394,7 @@ main :: proc(){
 	accumulator: f64
 	dt: f64
 
-	TIME_STEP :: 2.0
+	TIME_STEP :: 0.5
 
 	viewport := d3d11.VIEWPORT{0, 0, f32(width), f32(height), 0, 1}
 	device_context->RSSetViewports(1, &viewport)
@@ -456,7 +456,7 @@ main :: proc(){
 
 	}
 
-	// win32.ExitProcess(0)
+	win32.ExitProcess(0)
 }
 
 shader := `
@@ -506,46 +506,46 @@ service_window_proc :: proc "stdcall" (hwnd: win32.HWND, msg: win32.UINT, wparam
 }
 
 
-// main :: proc(){
-// 	instance := win32.HINSTANCE(win32.GetModuleHandleW(nil))
+main :: proc(){
+	instance := win32.HINSTANCE(win32.GetModuleHandleW(nil))
 
-// 	CLASS_NAME :: "service window"
+	CLASS_NAME :: "service window"
 
-// 	window_class := win32.WNDCLASSW {
-// 		style = win32.CS_OWNDC,
-// 		lpfnWndProc = service_window_proc,
-// 		lpszClassName = CLASS_NAME,
-// 		hInstance = instance,
-// 		hCursor = win32.LoadCursorA(nil, win32.IDC_ARROW),
-// 	}
+	window_class := win32.WNDCLASSW {
+		style = win32.CS_OWNDC,
+		lpfnWndProc = service_window_proc,
+		lpszClassName = CLASS_NAME,
+		hInstance = instance,
+		hCursor = win32.LoadCursorA(nil, win32.IDC_ARROW),
+	}
 
-// 	class_atom := win32.RegisterClassW(&window_class)
-//     assert(class_atom != 0, "Failed to register window class")
+	class_atom := win32.RegisterClassW(&window_class)
+    assert(class_atom != 0, "Failed to register window class")
 
-//     window := win32.CreateWindowW(
-// 		CLASS_NAME,
-// 		win32.L("Service Window"),
-// 		win32.WS_OVERLAPPEDWINDOW, //win32.WS_VISIBLE,
-// 		win32.CW_USEDEFAULT, win32.CW_USEDEFAULT,
-// 		win32.CW_USEDEFAULT, win32.CW_USEDEFAULT,
-// 		nil, nil, instance, nil,
-// 	)
-// 	assert(window != nil, "Failed to create window")
+    window := win32.CreateWindowW(
+		CLASS_NAME,
+		win32.L("Service Window"),
+		win32.WS_OVERLAPPEDWINDOW, //win32.WS_VISIBLE,
+		win32.CW_USEDEFAULT, win32.CW_USEDEFAULT,
+		win32.CW_USEDEFAULT, win32.CW_USEDEFAULT,
+		nil, nil, instance, nil,
+	)
+	assert(window != nil, "Failed to create window")
 
-// 	win32.CreateThread(nil, 0, main_thread, window, 0, &global_main_thread_id)
+	win32.CreateThread(nil, 0, main_thread, window, 0, &global_main_thread_id)
 
-// 	for {
-//         message: win32.MSG
-//         win32.GetMessageW(&message, nil, 0, 0)
-//         win32.TranslateMessage(&message)
-//         if (message.message == win32.WM_CHAR) ||
-//            (message.message == win32.WM_KEYDOWN) ||
-//            (message.message == win32.WM_QUIT) ||
-//            (message.message == win32.WM_SIZE){
-//             win32.PostThreadMessageW(global_main_thread_id, message.message, message.wParam, message.lParam)
-//         }
-//         else{
-//             win32.DispatchMessageW(&message)
-//         }
-//     }
-// }
+	for {
+        message: win32.MSG
+        win32.GetMessageW(&message, nil, 0, 0)
+        win32.TranslateMessage(&message)
+        if (message.message == win32.WM_CHAR) ||
+           (message.message == win32.WM_KEYDOWN) ||
+           (message.message == win32.WM_QUIT) ||
+           (message.message == win32.WM_SIZE){
+            win32.PostThreadMessageW(global_main_thread_id, message.message, message.wParam, message.lParam)
+        }
+        else{
+            win32.DispatchMessageW(&message)
+        }
+    }
+}

@@ -4,6 +4,7 @@ import win32 "core:sys/windows"
 import d3d11 "vendor:directx/d3d11"
 import d3d "vendor:directx/d3d_compiler"
 import dxgi "vendor:directx/dxgi"
+import xa2 "vendor:windows/XAudio2"
 import "core:fmt"
 import "core:mem"
 import "base:runtime"
@@ -21,6 +22,28 @@ framebuffer_view: ^d3d11.IRenderTargetView
 device_context: ^d3d11.IDeviceContext
 device: ^d3d11.IDevice
 swapchain: ^dxgi.ISwapChain1
+
+DirectX :: struct{
+	adapter: ^dxgi.IAdapter,
+	framebuffer_view: ^d3d11.IRenderTargetView,
+	device_context: ^d3d11.IDeviceContext,
+	device: ^d3d11.IDevice,
+	swapchain: ^dxgi.ISwapChain1,
+}
+
+
+XAudio2 :: struct{
+	xaudio2: ^xa2.IXAudio2,
+	mastering_voice: ^xa2.IXAudio2MasteringVoice,
+	source_voice: ^xa2.IXAudio2SourceVoice,
+
+	buffer_1:  []u16,
+	buffer_2:  []u16,
+}
+
+SoundBuffer :: struct{
+	data : []u16,
+}
 
 TEXTURE_WIDTH :: 1920
 TEXTURE_HEIGHT :: 1080
@@ -69,6 +92,43 @@ Pixel :: struct #raw_union{
 // 	}
 // 	free_all(context.temp_allocator)
 // }
+// VoiceCallback :: struct {
+	// // Called just before this voice's processing pass begins.
+	// OnVoiceProcessingPassStart: proc "system" (this: ^xa2.IXAudio2VoiceCallback, BytesRequired: u32),
+
+	// // Called just after this voice's processing pass ends.
+	// OnVoiceProcessingPassEnd: proc "system" (this: ^xa2.IXAudio2VoiceCallback),
+
+	// // Called when this voice has just finished playing a buffer stream (as marked with the END_OF_STREAM flag on the last buffer).
+	// OnStreamEnd: proc "system" (this: ^xa2.IXAudio2VoiceCallback),
+
+	// // Called when this voice is about to start processing a new buffer.
+	// OnBufferStart: proc "system" (this: ^xa2.IXAudio2VoiceCallback, pBufferContext: rawptr),
+
+	// // Called when this voice has just finished processing a buffer.
+	// // The buffer can now be reused or destroyed.
+	// OnBufferEnd: proc "system" (this: ^xa2.IXAudio2VoiceCallback, pBufferContext: rawptr),
+
+	// // Called when this voice has just reached the end position of a loop.
+	// OnLoopEnd: proc "system" (this: ^xa2.IXAudio2VoiceCallback, pBufferContext: rawptr),
+
+	// // Called in the event of a critical error during voice processing, such as a failing xAPO or an error from the hardware XMA decoder.
+	// // The voice may have to be destroyed and re-created to recover from the error.
+	// // The callback arguments report which buffer was being processed when the error occurred, and its HRESULT code.
+	// OnVoiceError: proc "system" (this: ^xa2.IXAudio2VoiceCallback, pBufferContext: rawptr, Error: win32.HRESULT),
+// }
+// OnVoiceProcessingPassStart :: proc "system" (this: ^VoiceCallback, BytesRequired: u32){}
+// OnVoiceProcessingPassEnd :: proc "system" (this: ^VoiceCallback){}
+// OnStreamEnd :: proc "system" (this: ^VoiceCallback){}
+// OnBufferStart :: proc "system" (this: ^VoiceCallback, pBufferContext: rawptr){}
+// OnBufferEnd :: proc "system" (this: ^VoiceCallback, pBufferContext: rawptr){}
+// OnLoopEnd :: proc "system" (this: ^VoiceCallback, pBufferContext: rawptr){}
+// OnVoiceError :: proc "system" (this: ^VoiceCallback, pBufferContext: rawptr, Error: win32.HRESULT){}
+
+
+write_audio_buffer :: proc(xaudio: ^XAudio2){
+
+}
 
 
 update_pixels :: proc(pixels: []Pixel){
@@ -154,6 +214,11 @@ window_proc :: proc "stdcall" (hwnd: win32.HWND, msg: win32.UINT, wparam: win32.
 
     return win32.DefWindowProcW(hwnd, msg, wparam, lparam)
 }
+
+// buffer_end_callback :: proc "system" (this: ^xa2.IXAudio2VoiceCallback, pBufferContext: rawptr){
+// 		// event: win32.HANDLE = (win32.HANDLE)(pBufferContext)
+// 		// win32.SetEvent(event)
+// }
 
 
 // main :: proc(){
@@ -384,6 +449,75 @@ main_thread :: proc "stdcall" (param : win32.LPVOID) -> win32.DWORD{
 	sampler_state: ^d3d11.ISamplerState
 	device->CreateSamplerState(&sampler_desc, &sampler_state)
 
+	// hr = win32.CoInitializeEx(nil, .MULTITHREADED)
+	hr = win32.CoInitializeEx(nil, .APARTMENTTHREADED)
+	// defer win32.CoUninitialize()
+	
+	assert(hr == win32.S_OK, "Failed to initialize COM")
+
+    xaudio2: ^xa2.IXAudio2
+    if hr = xa2.Create(&xaudio2); hr != win32.S_OK {
+        fmt.printfln("hr: %v", hr)
+        err := win32.GetLastError()
+        fmt.printfln("GetLastError: %8x (%v)", err, err)
+		// return 1
+        win32.ExitProcess(1)
+    } 
+
+	master_voice: ^xa2.IXAudio2MasteringVoice
+	if hr = xaudio2->CreateMasteringVoice(&master_voice); hr != win32.S_OK {
+        fmt.printfln("hr: %v", hr)
+        err := win32.GetLastError()
+        fmt.printfln("GetLastError: %8x (%v)", err, err)
+        // return 1
+		win32.ExitProcess(1)
+    } 
+
+	SAMPLES_PER_SECOND :: 48000
+	BUFFER_SIZE :: mem.Megabyte * 8
+
+	wave_format : win32.WAVEFORMATEX
+	wave_format.wFormatTag = win32.WAVE_FORMAT_PCM
+	wave_format.nChannels = 2
+	wave_format.nSamplesPerSec = SAMPLES_PER_SECOND
+	wave_format.wBitsPerSample = 16
+	wave_format.nBlockAlign = (wave_format.nChannels * wave_format.wBitsPerSample) / 8
+	wave_format.nAvgBytesPerSec = wave_format.nSamplesPerSec * u32(wave_format.nBlockAlign)
+	wave_format.cbSize = 0
+
+	callback: xa2.IXAudio2VoiceCallback
+	// callback: VoiceCallback
+	// callback.OnBufferEnd = buffer_end_callback
+	callback.OnBufferEnd = proc "system" (this: ^xa2.IXAudio2VoiceCallback, pBufferContext: rawptr){
+	// 	event: win32.HANDLE = (win32.HANDLE)(pBufferContext)
+	// 	win32.SetEvent(event)
+	}
+	// callback.OnVoiceProcessingPassStart = proc "system" (this: ^xa2.IXAudio2VoiceCallback, BytesRequired: u32){}
+	// callback.OnVoiceProcessingPassEnd = proc "system" (this: ^xa2.IXAudio2VoiceCallback){}
+	// callback.OnStreamEnd = proc "system" (this: ^xa2.IXAudio2VoiceCallback){}
+	// callback.OnBufferStart = proc "system" (this: ^xa2.IXAudio2VoiceCallback, pBufferContext: rawptr){}
+	// callback.OnBufferEnd = proc "system" (this: ^xa2.IXAudio2VoiceCallback, pBufferContext: rawptr){}
+	// callback.OnLoopEnd = proc "system" (this: ^xa2.IXAudio2VoiceCallback, pBufferContext: rawptr){}
+	// callback.OnVoiceError = proc "system" (this: ^xa2.IXAudio2VoiceCallback, pBufferContext: rawptr, Error: win32.HRESULT){}
+
+	source_voice: ^xa2.IXAudio2SourceVoice
+	// if hr = xaudio2->CreateSourceVoice(&source_voice, &wave_format); hr != win32.S_OK {
+	if hr = xaudio2->CreateSourceVoice(&source_voice, &wave_format, {}, xa2.DEFAULT_FREQ_RATIO, &callback, nil, nil); hr != win32.S_OK {
+	// if hr = xaudio2->CreateSourceVoice(&source_voice, &wave_format, {}, xa2.DEFAULT_FREQ_RATIO, (^xa2.IXAudio2VoiceCallback)(&callback), nil, nil); hr != win32.S_OK {
+        fmt.printfln("hr: %v", hr)
+        err := win32.GetLastError()
+        fmt.printfln("GetLastError: %8x (%v)", err, err)
+        // return 1
+		win32.ExitProcess(1)
+    }
+
+	xaudio2->StartEngine()
+	source_voice->Start({})
+
+	AUDIO_BUFFER_SIZE :: 1024 * 8
+	buffers := [2][]u16{make([]u16, AUDIO_BUFFER_SIZE), make([]u16, AUDIO_BUFFER_SIZE)}
+	events := [2]win32.HANDLE{win32.CreateEventW(nil, false, true, nil), win32.CreateEventW(nil, false, true, nil)}
+
 	win32.ShowWindow(window, win32.SW_SHOWDEFAULT)
 
 
@@ -413,6 +547,18 @@ main_thread :: proc "stdcall" (param : win32.LPVOID) -> win32.DWORD{
 
 		for accumulator += dt; accumulator >= TIME_STEP; accumulator -= TIME_STEP {
 			fmt.println("tick")
+
+			for i in 0..<2{
+				buffer := buffers[i]
+				event := events[i]
+				win32.WaitForSingleObject(event, win32.INFINITE)
+
+				buffer_descriptor: xa2.BUFFER
+				buffer_descriptor.pAudioData = raw_data(transmute([]u8)buffer)
+				buffer_descriptor.AudioBytes = size_of(u16) * AUDIO_BUFFER_SIZE
+				buffer_descriptor.pContext = event
+				source_voice->SubmitSourceBuffer(&buffer_descriptor, nil)
+			}
 		}
 
 		// win32.GetClientRect(window, &rect)
@@ -455,8 +601,9 @@ main_thread :: proc "stdcall" (param : win32.LPVOID) -> win32.DWORD{
 		prev_counter = next_counter
 
 	}
-
+	win32.CoUninitialize()
 	win32.ExitProcess(0)
+	// return 0
 }
 
 shader := `

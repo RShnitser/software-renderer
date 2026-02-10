@@ -3,7 +3,10 @@ package main
 import win32 "core:/sys/windows"
 import "base:runtime"
 import "core:math"
+import "core:fmt"
+import "core:mem"
 import ws "wasapi"
+import "winex"
 
 WinAudio :: struct{
     client: ^ws.IAudioClient,
@@ -52,7 +55,26 @@ audio_init :: proc(audio: ^WinAudio){
 
     hr_check(audio.client->GetService(ws.IAudioRenderClient_UUID, (^win32.LPVOID)(&audio.render_client)))
 
+    RINGBUFFER_SIZE :: 1024 * 64
+    placeholder1 := cast(^u8)winex.VirtualAlloc2(nil, nil, 2 * RINGBUFFER_SIZE, win32.MEM_RESERVE | winex.MEM_RESERVE_PLACEHOLDER, win32.PAGE_NOACCESS, nil, 0)
+    placeholder2 := mem.ptr_offset(placeholder1, RINGBUFFER_SIZE)
+    assert(placeholder1 != nil)
+
+    ok := win32.VirtualFree(placeholder1, RINGBUFFER_SIZE, win32.MEM_RELEASE | winex.MEM_PRESERVE_PLACEHOLDER)
+    assert(ok == true)
+    
+    section := win32.CreateFileMappingW(win32.INVALID_HANDLE_VALUE, nil, win32.PAGE_READWRITE, 0, RINGBUFFER_SIZE, nil)
+    assert(section != nil)
+
+    view1 := winex.MapViewOfFile3(section, nil, placeholder1, 0, RINGBUFFER_SIZE, winex.MEM_REPLACE_PLACEHOLDER, win32.PAGE_READWRITE, nil, 0)
+	view2 := winex.MapViewOfFile3(section, nil, placeholder2, 0, RINGBUFFER_SIZE, winex.MEM_REPLACE_PLACEHOLDER, win32.PAGE_READWRITE, nil, 0)
+	assert(view1 != nil && view2 != nil)
+
     win32.CreateThread(nil, 0, audio_thread, audio, 0, nil)
+
+    win32.VirtualFree(placeholder1, 0, win32.MEM_RELEASE)
+	win32.VirtualFree(placeholder2, 0, win32.MEM_RELEASE)
+	win32.CloseHandle(section)
 }
 
 audio_thread :: proc "std" (param: win32.LPVOID) -> win32.DWORD{

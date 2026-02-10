@@ -12,14 +12,14 @@ MEM_EXTENDED_PARAMETER_TYPE_BITS :: 8
 MEM_EXTENDED_PARAMETER :: struct {
     using DUMMYSTRUCTNAME: bit_field win32.DWORD64 {
 			Type:        win32.DWORD64 |  MEM_EXTENDED_PARAMETER_TYPE_BITS,
-			Reserved: win32.DWORD64 |  64 - MEM_EXTENDED_PARAMETER_TYPE_BITS,
+			Reserved:    win32.DWORD64 |  64 - MEM_EXTENDED_PARAMETER_TYPE_BITS,
 	},
 	using DUMMYUNIONNAME: struct #raw_union {
 		ULong64: win32.DWORD64,
-		Pointe: win32.PVOID,
-		Size : win32.SIZE_T,
-        Handle: win32.HANDLE,
-        ULong: win32.DWORD,
+		Pointe:  win32.PVOID,
+		Size :   win32.SIZE_T,
+        Handle:  win32.HANDLE,
+        ULong:   win32.DWORD,
 	},
 }
 

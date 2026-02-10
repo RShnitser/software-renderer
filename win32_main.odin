@@ -8,6 +8,7 @@ import xa2 "vendor:windows/XAudio2"
 import "core:fmt"
 import "core:mem"
 import "base:runtime"
+import "core:math"
 
 CREATE_DANGEROUS_WINDOW :: win32.WM_USER + 0x1337
 DESTROY_DANGEROUS_WINDOW :: win32.WM_USER + 0x1338
@@ -41,10 +42,6 @@ XAudio2 :: struct{
 	buffer_2:  []u16,
 }
 
-SoundBuffer :: struct{
-	data : []u16,
-}
-
 TEXTURE_WIDTH :: 1920
 TEXTURE_HEIGHT :: 1080
 
@@ -60,14 +57,6 @@ WindowParams :: struct {
     lpParam: win32.LPVOID,
 };
 
-Color :: struct #packed{
-	R, G, B, A: u8
-}
-
-Pixel :: struct #raw_union{
-	value: u32,
-	color: Color,
-}
 
 // debug_messages :: proc(info_queue: ^d3d11.IInfoQueue) {
 // 	message_count := info_queue->GetNumStoredMessages()
@@ -125,21 +114,11 @@ Pixel :: struct #raw_union{
 // OnLoopEnd :: proc "system" (this: ^VoiceCallback, pBufferContext: rawptr){}
 // OnVoiceError :: proc "system" (this: ^VoiceCallback, pBufferContext: rawptr, Error: win32.HRESULT){}
 
-
-write_audio_buffer :: proc(xaudio: ^XAudio2){
-
-}
-
-
-update_pixels :: proc(pixels: []Pixel){
-	index : u32
-	for h in 0..< TEXTURE_HEIGHT{
-		for w in 0..< TEXTURE_WIDTH{
-			pixels[index].color.G = u8(w)
-			pixels[index].color.B = u8(h)
-			index += 1
-		}
-	}
+hr_check :: proc(result : win32.HRESULT, loc := #caller_location){
+    if result != win32.S_OK {
+        err := win32.GetLastError()
+        fmt.panicf("Windows Error: HR:%v LastError:%v", result, err, loc = loc)
+    }
 }
 
 win32_get_wall_clock :: proc() ->u64{
@@ -450,73 +429,75 @@ main_thread :: proc "stdcall" (param : win32.LPVOID) -> win32.DWORD{
 	device->CreateSamplerState(&sampler_desc, &sampler_state)
 
 	// hr = win32.CoInitializeEx(nil, .MULTITHREADED)
-	hr = win32.CoInitializeEx(nil, .APARTMENTTHREADED)
+	// hr = win32.CoInitializeEx(nil, .APARTMENTTHREADED)
 	// defer win32.CoUninitialize()
 	
-	assert(hr == win32.S_OK, "Failed to initialize COM")
+	// assert(hr == win32.S_OK, "Failed to initialize COM")
 
-    xaudio2: ^xa2.IXAudio2
-    if hr = xa2.Create(&xaudio2); hr != win32.S_OK {
-        fmt.printfln("hr: %v", hr)
-        err := win32.GetLastError()
-        fmt.printfln("GetLastError: %8x (%v)", err, err)
-		// return 1
-        win32.ExitProcess(1)
-    } 
 
-	master_voice: ^xa2.IXAudio2MasteringVoice
-	if hr = xaudio2->CreateMasteringVoice(&master_voice); hr != win32.S_OK {
-        fmt.printfln("hr: %v", hr)
-        err := win32.GetLastError()
-        fmt.printfln("GetLastError: %8x (%v)", err, err)
-        // return 1
-		win32.ExitProcess(1)
-    } 
 
-	SAMPLES_PER_SECOND :: 48000
-	BUFFER_SIZE :: mem.Megabyte * 8
+    // xaudio2: ^xa2.IXAudio2
+    // if hr = xa2.Create(&xaudio2); hr != win32.S_OK {
+    //     fmt.printfln("hr: %v", hr)
+    //     err := win32.GetLastError()
+    //     fmt.printfln("GetLastError: %8x (%v)", err, err)
+	// 	// return 1
+    //     win32.ExitProcess(1)
+    // } 
 
-	wave_format : win32.WAVEFORMATEX
-	wave_format.wFormatTag = win32.WAVE_FORMAT_PCM
-	wave_format.nChannels = 2
-	wave_format.nSamplesPerSec = SAMPLES_PER_SECOND
-	wave_format.wBitsPerSample = 16
-	wave_format.nBlockAlign = (wave_format.nChannels * wave_format.wBitsPerSample) / 8
-	wave_format.nAvgBytesPerSec = wave_format.nSamplesPerSec * u32(wave_format.nBlockAlign)
-	wave_format.cbSize = 0
+	// master_voice: ^xa2.IXAudio2MasteringVoice
+	// if hr = xaudio2->CreateMasteringVoice(&master_voice); hr != win32.S_OK {
+    //     fmt.printfln("hr: %v", hr)
+    //     err := win32.GetLastError()
+    //     fmt.printfln("GetLastError: %8x (%v)", err, err)
+    //     // return 1
+	// 	win32.ExitProcess(1)
+    // } 
 
-	callback: xa2.IXAudio2VoiceCallback
+	SAMPLES_PER_SECOND :: 44100
+	AUDIO_CHANNELS :: 2
+	// BUFFER_SIZE :: mem.Megabyte * 8
+
+	// wave_format : win32.WAVEFORMATEX
+	// wave_format.wFormatTag = win32.WAVE_FORMAT_PCM
+	// wave_format.nChannels = AUDIO_CHANNELS
+	// wave_format.nSamplesPerSec = SAMPLES_PER_SECOND
+	// wave_format.wBitsPerSample = 16
+	// wave_format.nBlockAlign = (wave_format.nChannels * wave_format.wBitsPerSample) / 8
+	// wave_format.nAvgBytesPerSec = wave_format.nSamplesPerSec * u32(wave_format.nBlockAlign)
+	// wave_format.cbSize = 0
+
 	// callback: VoiceCallback
+	// callback: xa2.IXAudio2VoiceCallback
 	// callback.OnBufferEnd = buffer_end_callback
-	callback.OnBufferEnd = proc "system" (this: ^xa2.IXAudio2VoiceCallback, pBufferContext: rawptr){
+	// callback.OnBufferEnd = proc "system" (this: ^xa2.IXAudio2VoiceCallback, pBufferContext: rawptr){
 	// 	event: win32.HANDLE = (win32.HANDLE)(pBufferContext)
 	// 	win32.SetEvent(event)
-	}
+	// }
 	// callback.OnVoiceProcessingPassStart = proc "system" (this: ^xa2.IXAudio2VoiceCallback, BytesRequired: u32){}
 	// callback.OnVoiceProcessingPassEnd = proc "system" (this: ^xa2.IXAudio2VoiceCallback){}
 	// callback.OnStreamEnd = proc "system" (this: ^xa2.IXAudio2VoiceCallback){}
 	// callback.OnBufferStart = proc "system" (this: ^xa2.IXAudio2VoiceCallback, pBufferContext: rawptr){}
-	// callback.OnBufferEnd = proc "system" (this: ^xa2.IXAudio2VoiceCallback, pBufferContext: rawptr){}
 	// callback.OnLoopEnd = proc "system" (this: ^xa2.IXAudio2VoiceCallback, pBufferContext: rawptr){}
 	// callback.OnVoiceError = proc "system" (this: ^xa2.IXAudio2VoiceCallback, pBufferContext: rawptr, Error: win32.HRESULT){}
+	// callback.OnBufferEnd = proc "system" (this: ^xa2.IXAudio2VoiceCallback, pBufferContext: rawptr){}
 
-	source_voice: ^xa2.IXAudio2SourceVoice
+	// source_voice: ^xa2.IXAudio2SourceVoice
 	// if hr = xaudio2->CreateSourceVoice(&source_voice, &wave_format); hr != win32.S_OK {
-	if hr = xaudio2->CreateSourceVoice(&source_voice, &wave_format, {}, xa2.DEFAULT_FREQ_RATIO, &callback, nil, nil); hr != win32.S_OK {
-	// if hr = xaudio2->CreateSourceVoice(&source_voice, &wave_format, {}, xa2.DEFAULT_FREQ_RATIO, (^xa2.IXAudio2VoiceCallback)(&callback), nil, nil); hr != win32.S_OK {
-        fmt.printfln("hr: %v", hr)
-        err := win32.GetLastError()
-        fmt.printfln("GetLastError: %8x (%v)", err, err)
-        // return 1
-		win32.ExitProcess(1)
-    }
+	// // if hr = xaudio2->CreateSourceVoice(&source_voice, &wave_format, {}, xa2.DEFAULT_FREQ_RATIO, &callback, nil, nil); hr != win32.S_OK {
+	// // if hr = xaudio2->CreateSourceVoice(&source_voice, &wave_format, {}, xa2.DEFAULT_FREQ_RATIO, (^xa2.IXAudio2VoiceCallback)(&callback), nil, nil); hr != win32.S_OK {
+    //     fmt.printfln("hr: %v", hr)
+    //     err := win32.GetLastError()
+    //     fmt.printfln("GetLastError: %8x (%v)", err, err)
+    //     // return 1
+	// 	win32.ExitProcess(1)
+    // }
 
-	xaudio2->StartEngine()
-	source_voice->Start({})
+	// xaudio2->StartEngine()
+	// source_voice->Start({})
 
-	AUDIO_BUFFER_SIZE :: 1024 * 8
-	buffers := [2][]u16{make([]u16, AUDIO_BUFFER_SIZE), make([]u16, AUDIO_BUFFER_SIZE)}
-	events := [2]win32.HANDLE{win32.CreateEventW(nil, false, true, nil), win32.CreateEventW(nil, false, true, nil)}
+	audio: WinAudio
+	audio_init(&audio)
 
 	win32.ShowWindow(window, win32.SW_SHOWDEFAULT)
 
@@ -533,32 +514,111 @@ main_thread :: proc "stdcall" (param : win32.LPVOID) -> win32.DWORD{
 	viewport := d3d11.VIEWPORT{0, 0, f32(width), f32(height), 0, 1}
 	device_context->RSSetViewports(1, &viewport)
 
+	// audio_t_sine : f32 = 0
+	// sine_wave :f32 = 256.0
+
+	
+	AUDIO_BUFFER_SIZE :: SAMPLES_PER_SECOND * 2
+	// buffers := [2][]u16{make([]u16, AUDIO_BUFFER_SIZE), make([]u16, AUDIO_BUFFER_SIZE)}
+	// events := [2]win32.HANDLE{win32.CreateEventW(nil, false, true, nil), win32.CreateEventW(nil, false, true, nil)}
+	// audio_buffer := make([]u16, AUDIO_BUFFER_SIZE)
+	audio_buffer : SoundBuffer
+	audio_buffer.channels = AUDIO_CHANNELS
+	audio_buffer.samples_per_second = SAMPLES_PER_SECOND
+	audio_buffer.data = make([]u16, AUDIO_BUFFER_SIZE)
+
+	input := Input{}
+	state := GameState{}
+	state.volume = 300
+	state.sine_wave = 256.0
+	state.delta_time = TIME_STEP
+
+	// previous_samples_played: u64 = 0
+
 	for global_running{
+		
 		message: win32.MSG
 		for win32.PeekMessageW(&message, nil, 0, 0, win32.PM_REMOVE) {
 			switch message.message {
 			case win32.WM_QUIT:
 				global_running = false
+			// case win32.WM_SYSKEYDOWN:
+			// 	fallthrough
+			// case win32.WM_SYSKEYUP:
+			// 	fallthrough
+			// case win32.WM_KEYUP:
+			// 	fallthrough
+			// case win32.WM_KEYUP:
+			case win32.WM_SYSKEYDOWN, win32.WM_SYSKEYUP, win32.WM_KEYUP, win32.WM_KEYDOWN:
+				vk_code : u32 = (u32)(message.wParam)
+                was_down: b32 = ((message.lParam & (1 << 30)) != 0)
+                is_down: b32 = ((message.lParam & (1 << 31)) == 0)
+
+				if was_down != is_down{
+					if vk_code == win32.VK_UP{
+						process_input(&input.up, is_down)
+					}
+
+					if vk_code == win32.VK_DOWN{
+						process_input(&input.down, is_down)
+					}
+				}
 			case:
 				win32.TranslateMessage(&message)
 				win32.DispatchMessageW(&message)
 			}
 		}
 
+
+		// SAMPLES_TO_WRITE :: SAMPLES_PER_SECOND * TIME_STEP
+		TARGET_SAMPLES_TO_WRITE :: SAMPLES_PER_SECOND * TIME_STEP
 		for accumulator += dt; accumulator >= TIME_STEP; accumulator -= TIME_STEP {
-			fmt.println("tick")
+		// {
+			// source_voice_state: xa2.VOICE_STATE
+			// source_voice->GetState(&source_voice_state, {})
 
-			for i in 0..<2{
-				buffer := buffers[i]
-				event := events[i]
-				win32.WaitForSingleObject(event, win32.INFINITE)
+			// samples_diff := source_voice_state.SamplesPlayed - previous_samples_played
+			// fmt.println(samples_diff)
 
-				buffer_descriptor: xa2.BUFFER
-				buffer_descriptor.pAudioData = raw_data(transmute([]u8)buffer)
-				buffer_descriptor.AudioBytes = size_of(u16) * AUDIO_BUFFER_SIZE
-				buffer_descriptor.pContext = event
-				source_voice->SubmitSourceBuffer(&buffer_descriptor, nil)
-			}
+			// samples_to_write : i32 = TARGET_SAMPLES_TO_WRITE - i32(source_voice_state.SamplesPlayed - previous_samples_played)
+			// fmt.println(source_voice_state.SamplesPlayed, samples_to_write)
+			// samples_to_write : i32 = TARGET_SAMPLES_TO_WRITE
+			// fmt.println(source_voice_state.BuffersQueued)
+			// previous_samples_played = source_voice_state.SamplesPlayed
+			
+			// fmt.println("tick")
+			samples_to_write : i32 = 0
+			update(&state, input)
+			update_audio_buffer(&state, &audio_buffer, samples_to_write)
+			// for i in 0..<int(SAMPLES_TO_WRITE){
+			// 	for c in 0..<AUDIO_CHANNELS{
+			// 		audio_buffer_index := i * AUDIO_CHANNELS + c
+			// 		audio_buffer[audio_buffer_index] = u16(600 * math.sin(audio_t_sine))
+			// 	}
+			// 	audio_t_sine += 2.0 * math.PI * 1.0 / (f32(SAMPLES_PER_SECOND) / sine_wave)
+			// }
+
+			
+
+
+			// buffer_descriptor: xa2.BUFFER
+			// buffer_descriptor.pAudioData = raw_data(transmute([]u8)audio_buffer.data)
+			// buffer_descriptor.AudioBytes = u32(size_of(u16) * samples_to_write) * AUDIO_CHANNELS
+			// source_voice->SubmitSourceBuffer(&buffer_descriptor, nil)
+
+			// for i in 0..<2{
+			// 	buffer := buffers[i]
+			// 	event := events[i]
+			// 	win32.WaitForSingleObject(event, win32.INFINITE)
+
+			// 	buffer_descriptor: xa2.BUFFER
+			// 	buffer_descriptor.pAudioData = raw_data(transmute([]u8)buffer)
+			// 	buffer_descriptor.AudioBytes = size_of(u16) * AUDIO_BUFFER_SIZE
+			// 	buffer_descriptor.pContext = event
+			// 	source_voice->SubmitSourceBuffer(&buffer_descriptor, nil)
+			// }
+			input.down.has_changed = false
+			input.up.has_changed = false
 		}
 
 		// win32.GetClientRect(window, &rect)
@@ -599,8 +659,8 @@ main_thread :: proc "stdcall" (param : win32.LPVOID) -> win32.DWORD{
 		dt = win32_get_seconds_elapsed(prev_counter, next_counter)
 		// fmt.println(dt)
 		prev_counter = next_counter
-
 	}
+
 	win32.CoUninitialize()
 	win32.ExitProcess(0)
 	// return 0
@@ -687,6 +747,9 @@ main :: proc(){
         win32.TranslateMessage(&message)
         if (message.message == win32.WM_CHAR) ||
            (message.message == win32.WM_KEYDOWN) ||
+		   (message.message == win32.WM_KEYUP) ||
+		   (message.message == win32.WM_SYSKEYDOWN) ||
+		   (message.message == win32.WM_SYSKEYUP) ||
            (message.message == win32.WM_QUIT) ||
            (message.message == win32.WM_SIZE){
             win32.PostThreadMessageW(global_main_thread_id, message.message, message.wParam, message.lParam)

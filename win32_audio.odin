@@ -5,11 +5,20 @@ import "base:runtime"
 import "core:math"
 import "core:fmt"
 import "core:mem"
+import "core:sync"
 import ws "wasapi"
 
 WinAudio :: struct{
     client: ^ws.IAudioClient,
     render_client: ^ws.IAudioRenderClient,
+
+    stop: bool,
+    lock: win32.SRWLOCK,
+    thread: win32.HANDLE,
+    event: win32.HANDLE,
+
+    view1: rawptr,
+    view2: rawptr,
 }
 
 
@@ -54,6 +63,9 @@ audio_init :: proc(audio: ^WinAudio){
 
     hr_check(audio.client->GetService(ws.IAudioRenderClient_UUID, (^win32.LPVOID)(&audio.render_client)))
 
+    audio.event = win32.CreateEventW(nil, false, false, nil)
+    hr_check(audio.client->SetEventHandle(audio.event))
+
     RINGBUFFER_SIZE :: 1024 * 64
     placeholder1 := cast(^u8)win32.VirtualAlloc2(nil, nil, 2 * RINGBUFFER_SIZE, win32.MEM_RESERVE | win32.MEM_RESERVE_PLACEHOLDER, win32.PAGE_NOACCESS, nil, 0)
     placeholder2 := mem.ptr_offset(placeholder1, RINGBUFFER_SIZE)
@@ -65,15 +77,19 @@ audio_init :: proc(audio: ^WinAudio){
     section := win32.CreateFileMappingW(win32.INVALID_HANDLE_VALUE, nil, win32.PAGE_READWRITE, 0, RINGBUFFER_SIZE, nil)
     assert(section != nil)
 
-    view1 := cast([^]i8)win32.MapViewOfFile3(section, nil, placeholder1, 0, RINGBUFFER_SIZE, win32.MEM_REPLACE_PLACEHOLDER, win32.PAGE_READWRITE, nil, 0)
-	view2 := cast([^]i16)win32.MapViewOfFile3(section, nil, placeholder2, 0, RINGBUFFER_SIZE, win32.MEM_REPLACE_PLACEHOLDER, win32.PAGE_READWRITE, nil, 0)
-	assert(view1 != nil && view2 != nil)
+    audio.view1 = win32.MapViewOfFile3(section, nil, placeholder1, 0, RINGBUFFER_SIZE, win32.MEM_REPLACE_PLACEHOLDER, win32.PAGE_READWRITE, nil, 0)
+	audio.view2 = win32.MapViewOfFile3(section, nil, placeholder2, 0, RINGBUFFER_SIZE, win32.MEM_REPLACE_PLACEHOLDER, win32.PAGE_READWRITE, nil, 0)
+	assert(audio.view1 != nil && audio.view2 != nil)
 
-    win32.CreateThread(nil, 0, audio_thread, audio, 0, nil)
+    audio.thread = win32.CreateThread(nil, 0, audio_thread, audio, 0, nil)
 
     win32.VirtualFree(placeholder1, 0, win32.MEM_RELEASE)
 	win32.VirtualFree(placeholder2, 0, win32.MEM_RELEASE)
 	win32.CloseHandle(section)
+
+    sync.atomic_exchange(&audio.stop, false)
+
+	win32.InitializeSRWLock(&audio.lock)
 }
 
 audio_thread :: proc "std" (param: win32.LPVOID) -> win32.DWORD{
@@ -81,16 +97,15 @@ audio_thread :: proc "std" (param: win32.LPVOID) -> win32.DWORD{
 
     audio := (^WinAudio)(param)
 
-    buffer_ready_event := win32.CreateEventW(nil, false, false, nil)
-    audio.client->SetEventHandle(buffer_ready_event)
+   
     buffer_frame_count: u32
     hr_check(audio.client->GetBufferSize(&buffer_frame_count))
     hr_check(audio.client->Start())
 
    
 
-    for {
-        win32.WaitForSingleObject(buffer_ready_event, win32.INFINITE)
+    for !audio.stop{
+        win32.WaitForSingleObject(audio.event, win32.INFINITE)
 
         padding_frame_count: u32
 	    hr_check(audio.client->GetCurrentPadding(&padding_frame_count)) 
@@ -98,6 +113,8 @@ audio_thread :: proc "std" (param: win32.LPVOID) -> win32.DWORD{
         max_output_frames := buffer_frame_count - padding_frame_count
         data: ^u8
 	    hr_check(audio.render_client->GetBuffer(max_output_frames, &data))
+
+        win32.AcquireSRWLockExclusive(&audio.lock)
 
 
         @(static) t_sine: f32
@@ -125,9 +142,24 @@ audio_thread :: proc "std" (param: win32.LPVOID) -> win32.DWORD{
         hr_check(audio.render_client->ReleaseBuffer(max_output_frames, nil))
     }
 
+    hr_check(audio.client->Stop())
     return 0
 }
 
-audio_cleanup :: proc(audio: ^WinAudio){
+audio_shutdown :: proc(audio: ^WinAudio){
+    sync.atomic_exchange(&audio.stop, true)
+	win32.SetEvent(audio.event)
+
+    win32.WaitForSingleObject(audio.thread, win32.INFINITE)
+
+    win32.CloseHandle(audio.event)
+    win32.CloseHandle(audio.thread)
+    
+    win32.UnmapViewOfFileEx(audio.view1, 0)
+	win32.UnmapViewOfFileEx(audio.view2, 0)
+
+    audio.client->Release()
+    audio.render_client->Release()
+
     win32.CoUninitialize()
 }
